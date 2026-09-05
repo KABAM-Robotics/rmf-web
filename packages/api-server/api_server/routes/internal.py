@@ -8,6 +8,7 @@ from websockets.exceptions import ConnectionClosed
 
 from api_server import models as mdl
 from api_server.exceptions import AlreadyExistsError
+from api_server.fleet_state_reconciliation import reconcile_terminal_task_assignments
 from api_server.logging import LoggerAdapter, get_logger
 from api_server.models.user import User
 from api_server.repositories import AlertRepository, FleetRepository, TaskRepository
@@ -41,6 +42,24 @@ async def process_msg(
         task_state = mdl.TaskState(**msg["data"])
         await task_repo.save_task_state(task_state)
         task_events.task_states.on_next(task_state)
+
+        # A terminal task update can arrive after the last fleet-state update.
+        # Reconcile and publish the stored snapshots immediately so subscribers
+        # do not keep showing a robot as working on a finished UUID.
+        if task_state.status in {
+            mdl.TaskStatus.canceled,
+            mdl.TaskStatus.killed,
+            mdl.TaskStatus.completed,
+            mdl.TaskStatus.failed,
+            mdl.TaskStatus.skipped,
+        }:
+            for stored_fleet in await fleet_repo.get_all_fleets():
+                reconciled, changed = await reconcile_terminal_task_assignments(
+                    stored_fleet, task_repo
+                )
+                if changed:
+                    await fleet_repo.save_fleet_state(reconciled)
+                    fleet_events.fleet_states.on_next(reconciled)
 
         if task_state.status == mdl.TaskStatus.completed:
             alert_request = mdl.AlertRequest(
@@ -98,6 +117,9 @@ async def process_msg(
 
     elif payload_type == "fleet_state_update":
         fleet_state = mdl.FleetState(**msg["data"])
+        fleet_state, _ = await reconcile_terminal_task_assignments(
+            fleet_state, task_repo
+        )
         await fleet_repo.save_fleet_state(fleet_state)
         fleet_events.fleet_states.on_next(fleet_state)
 

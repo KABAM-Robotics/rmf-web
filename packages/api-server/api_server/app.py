@@ -93,6 +93,9 @@ async def lifespan(_app: FastIO):
     await stack.enter_async_context(gateway.get_rmf_gateway)
     await stack.enter_async_context(get_tasks_service)
 
+    prev_sigint = None
+    prev_sigterm = None
+
     # shutdown event is not called when the app crashes, this can cause the app to be
     # "locked up" as some dependencies like tortoise does not allow python to exit until
     # it is closed "gracefully".
@@ -192,6 +195,7 @@ app.include_router(
     routes.delivery_alerts_router,
     prefix="/delivery_alerts",
     dependencies=[Depends(user_dep)],
+    deprecated=True,
 )
 app.include_router(
     routes.doors_router, prefix="/doors", dependencies=[Depends(user_dep)]
@@ -258,7 +262,13 @@ async def redoc_html():
 async def _load_states(rmf_events: RmfEvents):
     default_logger.info("loading states from database...")
 
-    door_states = [DoorState.model_validate(x) for x in await ttm.DoorState.all()]
+    # JsonMixin stores the ROS message fields inside the ``data`` JSON column;
+    # the ORM instance itself only exposes ``id_`` and ``data``. Validating the
+    # ORM object works while the table is empty but breaks every restart after
+    # a state has been persisted because Pydantic cannot see the nested fields.
+    door_states = [
+        DoorState.model_validate(x.data) for x in await ttm.DoorState.all()
+    ]
     for state in door_states:
         rmf_events.door_states.on_next(state)
     default_logger.info(f"loaded {len(door_states)} door states")
@@ -269,14 +279,16 @@ async def _load_states(rmf_events: RmfEvents):
     default_logger.info(f"loaded {len(lift_states)} lift states")
 
     dispenser_states = [
-        DispenserState.model_validate(x) for x in await ttm.DispenserState.all()
+        DispenserState.model_validate(x.data)
+        for x in await ttm.DispenserState.all()
     ]
     for state in dispenser_states:
         rmf_events.dispenser_states.on_next(state)
     default_logger.info(f"loaded {len(dispenser_states)} dispenser states")
 
     ingestor_states = [
-        IngestorState.model_validate(x) for x in await ttm.IngestorState.all()
+        IngestorState.model_validate(x.data)
+        for x in await ttm.IngestorState.all()
     ]
     for state in ingestor_states:
         rmf_events.ingestor_states.on_next(state)

@@ -25,6 +25,34 @@ from tortoise.query_utils import Prefetch
 from tortoise.transactions import in_transaction
 
 
+def normalize_contradictory_terminal_state(task_state: TaskState) -> bool:
+    """Normalize RMF's narrow completed-final-phase/standby contradiction.
+
+    A lift-arrival replan can leave superseded legacy events underway while the
+    task's final phase is already listed as completed with a finish timestamp.
+    Do not infer completion from a finish estimate, stale event, or a task that
+    carries explicit cancellation evidence.
+    """
+    if (
+        task_state.cancellation is not None
+        or task_state.active is None
+        or task_state.completed is None
+        or task_state.active not in task_state.completed
+        or task_state.pending is None
+        or task_state.pending
+        or not task_state.phases
+    ):
+        return False
+    active_id = getattr(task_state.active, "root", task_state.active)
+    phase = task_state.phases.get(str(active_id))
+    if phase is None or not phase.unix_millis_finish_time:
+        return False
+    if task_state.status == TaskStatus.completed:
+        return False
+    task_state.status = TaskStatus.completed
+    return True
+
+
 class TaskRepository:
     def __init__(
         self,
@@ -65,6 +93,12 @@ class TaskRepository:
             )
 
     async def save_task_state(self, task_state: TaskState) -> None:
+        if normalize_contradictory_terminal_state(task_state):
+            self.logger.warning(
+                "Normalized contradictory RMF final-phase state task_id=%s active=%s",
+                task_state.booking.id,
+                task_state.active,
+            )
         async with in_transaction():
             # RENYU fix for labels, requester and request time disappearing. Either something in rmf core or fleet adapter is removing them from tasks
             # The original dispatch task has correct details so I'm just passing in the old values to future updates of tasks
@@ -127,6 +161,65 @@ class TaskRepository:
             if created and task_state.booking.labels:
                 labels = Labels.from_strings(task_state.booking.labels)
                 await self.save_task_labels(db_task_state, labels)
+
+    async def compare_and_set_underway_task_terminal(
+        self,
+        task_state: TaskState,
+        expected_robot: str,
+    ) -> bool:
+        """Persist an administrative terminal projection without races.
+
+        This deliberately updates only a non-terminal row that is still
+        assigned to the operator-confirmed robot. Queued/standby rows are
+        included because an API-server restart can leave a database-only task
+        that the dispatcher no longer owns. A concurrent normal RMF terminal
+        update wins instead of being overwritten by reconciliation.
+        """
+        finish_time = (
+            datetime.fromtimestamp(
+                task_state.unix_millis_finish_time / 1000, timezone.utc
+            )
+            if task_state.unix_millis_finish_time
+            else None
+        )
+        updated = await DbTaskState.filter(
+            id_=task_state.booking.id,
+            status__in=[
+                TaskStatus.queued,
+                TaskStatus.standby,
+                TaskStatus.underway,
+            ],
+            assigned_to=expected_robot,
+        ).update(
+            data=task_state.model_dump_json(),
+            status=task_state.status,
+            unix_millis_finish_time=finish_time,
+        )
+        return updated == 1
+
+    async def compare_and_set_standby_task_completed(
+        self,
+        task_state: TaskState,
+        expected_robot: str,
+    ) -> bool:
+        """Normalize one persisted standby/final-phase contradiction safely."""
+        finish_time = (
+            datetime.fromtimestamp(
+                task_state.unix_millis_finish_time / 1000, timezone.utc
+            )
+            if task_state.unix_millis_finish_time
+            else None
+        )
+        updated = await DbTaskState.filter(
+            id_=task_state.booking.id,
+            status=TaskStatus.standby,
+            assigned_to=expected_robot,
+        ).update(
+            data=task_state.model_dump_json(),
+            status=TaskStatus.completed,
+            unix_millis_finish_time=finish_time,
+        )
+        return updated == 1
 
     async def query_task_states(
         self,

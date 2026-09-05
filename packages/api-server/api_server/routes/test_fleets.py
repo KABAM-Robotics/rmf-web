@@ -1,6 +1,9 @@
+from api_server import models as mdl
+from api_server.logging import default_logger
 from api_server.models import FleetLog, FleetLogUpdate, FleetState, FleetStateUpdate
+from api_server.repositories import TaskRepository
 from api_server.rmf_io.events import get_fleet_events
-from api_server.test import AppFixture, make_fleet_log, make_fleet_state
+from api_server.test import AppFixture, make_fleet_log, make_fleet_state, make_task_state
 
 
 class TestFleetsRoute(AppFixture):
@@ -53,3 +56,34 @@ class TestFleetsRoute(AppFixture):
             resp = self.client.get(f"/fleets/{fleet_log.name}/log")
             self.assertEqual(200, resp.status_code)
             self.assertEqual(fleet_log.name, resp.json()["name"])
+
+    def test_terminal_task_uuid_is_removed_from_fleet_state(self):
+        task = make_task_state(task_id="terminal-fleet-state-task")
+        task.status = mdl.TaskStatus.canceled
+        repo = TaskRepository(self.admin_user, default_logger)
+        self.get_portal().call(repo.save_task_state, task)
+
+        fleet_state = make_fleet_state()
+        fleet_state.robots = {
+            "robot": mdl.RobotState(
+                name="robot",
+                status=mdl.RobotStatus.working,
+                task_id=task.booking.id,
+            )
+        }
+        with self.client.websocket_connect("/_internal") as ws, self.subscribe_sio(
+            f"/fleets/{fleet_state.name}/state"
+        ) as sub:
+            ws.send_text(
+                FleetStateUpdate(
+                    type="fleet_state_update", data=fleet_state
+                ).model_dump_json()
+            )
+            emitted = FleetState(**next(sub))
+            self.assertEqual("", emitted.robots["robot"].task_id)
+
+        response = self.client.get(f"/fleets/{fleet_state.name}/state")
+        self.assertEqual(200, response.status_code, response.content)
+        robot = response.json()["robots"]["robot"]
+        self.assertEqual("", robot["task_id"])
+        self.assertEqual("idle", robot["status"])

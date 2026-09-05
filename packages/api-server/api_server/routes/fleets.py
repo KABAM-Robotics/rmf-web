@@ -6,6 +6,7 @@ from reactivex import operators as rxops
 
 from api_server.authenticator import user_dep
 from api_server.dependencies import time_between_query
+from api_server.fleet_state_reconciliation import reconcile_terminal_task_assignments
 from api_server.fast_io import FastIORouter, SubscriptionRequest
 from api_server.gateway import RmfGateway, get_rmf_gateway
 from api_server.logging import LoggerAdapter, get_logger
@@ -19,7 +20,7 @@ from api_server.models import (
     RobotCommissionResponse,
     User,
 )
-from api_server.repositories import FleetRepository
+from api_server.repositories import FleetRepository, TaskRepository
 from api_server.rmf_io import get_tasks_service
 from api_server.rmf_io.events import get_fleet_events
 from api_server.rmf_io.rmf_service import RmfService
@@ -30,13 +31,19 @@ router = FastIORouter(tags=["Fleets"])
 @router.get("", response_model=list[FleetState])
 async def get_fleets(
     repo: Annotated[FleetRepository, Depends(FleetRepository)],
+    task_repo: Annotated[TaskRepository, Depends(TaskRepository)],
 ):
-    return await repo.get_all_fleets()
+    return [
+        (await reconcile_terminal_task_assignments(fleet, task_repo))[0]
+        for fleet in await repo.get_all_fleets()
+    ]
 
 
 @router.get("/{name}/state", response_model=FleetState)
 async def get_fleet_state(
-    name: str, repo: Annotated[FleetRepository, Depends(FleetRepository)]
+    name: str,
+    repo: Annotated[FleetRepository, Depends(FleetRepository)],
+    task_repo: Annotated[TaskRepository, Depends(TaskRepository)],
 ):
     """
     Available in socket.io
@@ -44,7 +51,7 @@ async def get_fleet_state(
     fleet_state = await repo.get_fleet_state(name)
     if fleet_state is None:
         raise HTTPException(status_code=404)
-    return fleet_state
+    return (await reconcile_terminal_task_assignments(fleet_state, task_repo))[0]
 
 
 @router.sub("/{name}/state", response_model=FleetState)

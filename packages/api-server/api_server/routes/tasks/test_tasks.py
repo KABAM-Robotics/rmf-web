@@ -1,3 +1,6 @@
+import time
+
+from fastapi import HTTPException
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -6,10 +9,24 @@ import pydantic
 from api_server import models as mdl
 from api_server.logging import default_logger
 from api_server.models import TaskEventLog, TaskState
-from api_server.repositories import TaskRepository
+from api_server.models.rmf_api.task_state import AssignedTo, Cancellation, Id
+from api_server.models.tortoise_models import TaskState as DbTaskState
+from api_server.repositories import FleetRepository, TaskRepository
+from api_server.repositories.tasks import normalize_contradictory_terminal_state
 from api_server.rmf_io import get_tasks_service
 from api_server.rmf_io.events import get_task_events
-from api_server.test import AppFixture, make_task_log, make_task_state
+from api_server.test import AppFixture, make_fleet_state, make_task_log, make_task_state
+
+
+async def _delete_task_state(task_id: str):
+    await DbTaskState.filter(id_=task_id).delete()
+
+
+async def _force_contradictory_standby(task: TaskState):
+    await DbTaskState.filter(id_=task.booking.id).update(
+        data=task.model_dump_json(),
+        status=mdl.TaskStatus.standby,
+    )
 
 
 class TestTasksRoute(AppFixture):
@@ -62,6 +79,37 @@ class TestTasksRoute(AppFixture):
         self.assertEqual("", labels.root["test_single"])
         self.assertEqual("", labels.root["test_single_2"])
         self.assertEqual("value", labels.root["test_kv"])
+
+    def test_normalizes_only_completed_final_phase_contradiction(self):
+        state = make_task_state(task_id="contradictory-final")
+        state.status = mdl.TaskStatus.standby
+        state.active = 2
+        state.completed = [1, 2]
+        state.pending = []
+        state.phases["2"].unix_millis_finish_time = 1234
+        self.assertTrue(normalize_contradictory_terminal_state(state))
+        self.assertEqual(mdl.TaskStatus.completed, state.status)
+
+        active = make_task_state(task_id="still-active")
+        active.status = mdl.TaskStatus.standby
+        active.active = 2
+        active.completed = [1]
+        active.pending = []
+        active.phases["2"].unix_millis_finish_time = 1234
+        self.assertFalse(normalize_contradictory_terminal_state(active))
+        self.assertEqual(mdl.TaskStatus.standby, active.status)
+
+        canceled = make_task_state(task_id="canceled-final")
+        canceled.status = mdl.TaskStatus.standby
+        canceled.active = 2
+        canceled.completed = [1, 2]
+        canceled.pending = []
+        canceled.phases["2"].unix_millis_finish_time = 1234
+        canceled.cancellation = Cancellation(
+            unix_millis_request_time=1200, labels=["operator"]
+        )
+        self.assertFalse(normalize_contradictory_terminal_state(canceled))
+        self.assertEqual(mdl.TaskStatus.standby, canceled.status)
 
     def test_query_task_states(self):
         resp = self.client.get(f"/tasks?task_id={self.task_states[0].booking.id}")
@@ -240,6 +288,306 @@ class TestTasksRoute(AppFixture):
                 ).model_dump_json(exclude_none=True),
             )
             self.assertEqual(200, resp.status_code, resp.content)
+
+    def test_cancel_task_timeout_is_idempotent_for_terminal_task(self):
+        original_state = self.task_states[0]
+        task_id = original_state.booking.id
+        state = original_state.model_copy(
+            update={"status": mdl.TaskStatus.completed}
+        )
+        repo = TaskRepository(self.admin_user, default_logger)
+        self.get_portal().call(repo.save_task_state, state)
+
+        try:
+            with patch.object(get_tasks_service(), "call") as mock:
+                mock.side_effect = HTTPException(500, "rmf service timed out")
+                resp = self.client.post(
+                    "/tasks/cancel_task",
+                    content=mdl.CancelTaskRequest(
+                        type="cancel_task_request", task_id=task_id, labels=None
+                    ).model_dump_json(exclude_none=True),
+                )
+        finally:
+            self.get_portal().call(repo.save_task_state, original_state)
+
+        self.assertEqual(200, resp.status_code, resp.content)
+        self.assertEqual({"success": True}, resp.json())
+
+    def test_cancel_task_timeout_reports_non_terminal_state(self):
+        original_state = self.task_states[1]
+        task_id = original_state.booking.id
+        state = original_state.model_copy(
+            update={"status": mdl.TaskStatus.underway}
+        )
+        repo = TaskRepository(self.admin_user, default_logger)
+        self.get_portal().call(repo.save_task_state, state)
+
+        try:
+            with patch.object(get_tasks_service(), "call") as mock:
+                mock.side_effect = HTTPException(500, "rmf service timed out")
+                resp = self.client.post(
+                    "/tasks/cancel_task",
+                    content=mdl.CancelTaskRequest(
+                        type="cancel_task_request", task_id=task_id, labels=None
+                    ).model_dump_json(exclude_none=True),
+                )
+        finally:
+            self.get_portal().call(repo.save_task_state, original_state)
+
+        self.assertEqual(504, resp.status_code, resp.content)
+        self.assertEqual(task_id, resp.json()["detail"]["task_id"])
+        self.assertEqual("underway", resp.json()["detail"]["task_status"])
+
+    def test_cancel_task_timeout_is_idempotent_when_task_is_absent(self):
+        task_id = str(uuid4())
+        with patch.object(get_tasks_service(), "call") as mock:
+            mock.side_effect = HTTPException(500, "rmf service timed out")
+            resp = self.client.post(
+                "/tasks/cancel_task",
+                content=mdl.CancelTaskRequest(
+                    type="cancel_task_request", task_id=task_id, labels=None
+                ).model_dump_json(exclude_none=True),
+            )
+
+        self.assertEqual(200, resp.status_code, resp.content)
+        self.assertEqual({"success": True}, resp.json())
+
+    def _save_reset_reconciliation_fixture(
+        self, task_id: str, robot_task_id: str = ""
+    ):
+        fleet = make_fleet_state()
+        fleet.name = f"fleet-{task_id}"
+        robot = f"robot-{task_id}"
+        fleet.robots = {
+            robot: mdl.RobotState(
+                name=robot,
+                status=mdl.RobotStatus.idle,
+                task_id=robot_task_id,
+                unix_millis_time=int(time.time() * 1000),
+            )
+        }
+        task = make_task_state(task_id=task_id)
+        task.status = mdl.TaskStatus.underway
+        task.assigned_to = AssignedTo(group=fleet.name, name=robot)
+        portal = self.get_portal()
+        portal.call(
+            FleetRepository(self.admin_user, default_logger).save_fleet_state,
+            fleet,
+        )
+        portal.call(TaskRepository(self.admin_user, default_logger).save_task_state, task)
+        return fleet, robot, task
+
+    def test_operator_reset_reconciles_exact_orphan_and_is_idempotent(self):
+        fleet, robot, task = self._save_reset_reconciliation_fixture(
+            "operator-reset-orphan"
+        )
+        payload = {
+            "fleet": fleet.name,
+            "robot": robot,
+            "expected_task_id": task.booking.id,
+            "reason": "operator_confirmed_dock_reset",
+        }
+        try:
+            first = self.client.post("/tasks/reconcile_robot_reset", json=payload)
+            self.assertEqual(200, first.status_code, first.content)
+            self.assertTrue(first.json()["reconciled"])
+            self.assertEqual("canceled", first.json()["task_status"])
+
+            second = self.client.post("/tasks/reconcile_robot_reset", json=payload)
+            self.assertEqual(200, second.status_code, second.content)
+            self.assertFalse(second.json()["reconciled"])
+        finally:
+            self.get_portal().call(_delete_task_state, task.booking.id)
+
+    def test_operator_reset_refuses_robot_with_active_task(self):
+        fleet, robot, task = self._save_reset_reconciliation_fixture(
+            "operator-reset-active", robot_task_id="replacement-task"
+        )
+        try:
+            response = self.client.post(
+                "/tasks/reconcile_robot_reset",
+                json={
+                    "fleet": fleet.name,
+                    "robot": robot,
+                    "expected_task_id": task.booking.id,
+                    "reason": "operator_confirmed_dock_reset",
+                },
+            )
+            self.assertEqual(409, response.status_code, response.content)
+            state = self.client.get(f"/tasks/{task.booking.id}/state").json()
+            self.assertEqual("underway", state["status"])
+        finally:
+            self.get_portal().call(_delete_task_state, task.booking.id)
+
+    def _save_historical_completion_fixture(
+        self, task_id: str, robot_task_id: str = ""
+    ):
+        fleet = make_fleet_state()
+        fleet.name = f"fleet-{task_id}"
+        robot = f"robot-{task_id}"
+        fleet.robots = {
+            robot: mdl.RobotState(
+                name=robot,
+                status=mdl.RobotStatus.idle,
+                task_id=robot_task_id,
+                unix_millis_time=int(time.time() * 1000),
+            )
+        }
+        task = make_task_state(task_id=task_id)
+        task.status = mdl.TaskStatus.standby
+        task.assigned_to = AssignedTo(group=fleet.name, name=robot)
+        task.active = Id(root=2)
+        task.completed = [Id(root=1)]
+        task.pending = []
+        portal = self.get_portal()
+        portal.call(
+            FleetRepository(self.admin_user, default_logger).save_fleet_state,
+            fleet,
+        )
+        portal.call(TaskRepository(self.admin_user, default_logger).save_task_state, task)
+        task.completed = [Id(root=1), Id(root=2)]
+        task.phases["2"].unix_millis_finish_time = int(time.time() * 1000) - 7_200_000
+        task.unix_millis_finish_time = task.phases["2"].unix_millis_finish_time
+        portal.call(_force_contradictory_standby, task)
+        return fleet, robot, task
+
+    def test_historical_completion_normalizes_exact_contradiction(self):
+        fleet, robot, task = self._save_historical_completion_fixture(
+            "historical-final-phase"
+        )
+        payload = {
+            "fleet": fleet.name,
+            "robot": robot,
+            "expected_task_id": task.booking.id,
+            "reason": "historical_final_phase_completion",
+        }
+        try:
+            first = self.client.post(
+                "/tasks/reconcile_historical_completion", json=payload
+            )
+            self.assertEqual(200, first.status_code, first.content)
+            self.assertTrue(first.json()["reconciled"])
+            self.assertEqual("completed", first.json()["task_status"])
+
+            second = self.client.post(
+                "/tasks/reconcile_historical_completion", json=payload
+            )
+            self.assertEqual(200, second.status_code, second.content)
+            self.assertFalse(second.json()["reconciled"])
+
+            state = self.client.get(f"/tasks/{task.booking.id}/state").json()
+            self.assertEqual("completed", state["status"])
+            self.assertIsNone(state["active"])
+        finally:
+            self.get_portal().call(_delete_task_state, task.booking.id)
+
+    def test_historical_completion_refuses_robot_with_active_task(self):
+        fleet, robot, task = self._save_historical_completion_fixture(
+            "historical-active-robot", robot_task_id="replacement-task"
+        )
+        try:
+            response = self.client.post(
+                "/tasks/reconcile_historical_completion",
+                json={
+                    "fleet": fleet.name,
+                    "robot": robot,
+                    "expected_task_id": task.booking.id,
+                    "reason": "historical_final_phase_completion",
+                },
+            )
+            self.assertEqual(409, response.status_code, response.content)
+            state = self.client.get(f"/tasks/{task.booking.id}/state").json()
+            self.assertEqual("standby", state["status"])
+        finally:
+            self.get_portal().call(_delete_task_state, task.booking.id)
+
+    def test_historical_completion_refuses_cancellation_evidence(self):
+        fleet, robot, task = self._save_historical_completion_fixture(
+            "historical-canceled-final"
+        )
+        task.cancellation = Cancellation(
+            unix_millis_request_time=int(time.time() * 1000) - 7_100_000,
+            labels=["kabam_task_manager"],
+        )
+        self.get_portal().call(_force_contradictory_standby, task)
+        try:
+            response = self.client.post(
+                "/tasks/reconcile_historical_completion",
+                json={
+                    "fleet": fleet.name,
+                    "robot": robot,
+                    "expected_task_id": task.booking.id,
+                    "reason": "historical_final_phase_completion",
+                },
+            )
+            self.assertEqual(409, response.status_code, response.content)
+            self.assertEqual(
+                "task contains cancellation evidence",
+                response.json()["detail"]["message"],
+            )
+        finally:
+            self.get_portal().call(_delete_task_state, task.booking.id)
+
+    def _save_historical_cancellation_fixture(self, task_id: str):
+        fleet = make_fleet_state()
+        fleet.name = f"fleet-{task_id}"
+        robot = f"robot-{task_id}"
+        fleet.robots = {
+            robot: mdl.RobotState(
+                name=robot, status=mdl.RobotStatus.idle, task_id="",
+                unix_millis_time=int(time.time() * 1000),
+            )
+        }
+        task = make_task_state(task_id=task_id)
+        task.status = mdl.TaskStatus.standby
+        task.assigned_to = AssignedTo(group=fleet.name, name=robot)
+        task.unix_millis_start_time = int(time.time() * 1000) - 7_200_000
+        task.active = Id(root=2)
+        task.completed = [Id(root=1)]
+        task.pending = []
+        portal = self.get_portal()
+        portal.call(
+            FleetRepository(self.admin_user, default_logger).save_fleet_state, fleet)
+        portal.call(
+            TaskRepository(self.admin_user, default_logger).save_task_state, task)
+        return fleet, robot, task
+
+    def test_historical_cancellation_closes_exact_unproven_orphan(self):
+        fleet, robot, task = self._save_historical_cancellation_fixture(
+            "historical-unproven-orphan")
+        payload = {
+            "fleet": fleet.name, "robot": robot,
+            "expected_task_id": task.booking.id,
+            "reason": "operator_confirmed_historical_abandonment",
+        }
+        try:
+            first = self.client.post(
+                "/tasks/reconcile_historical_cancellation", json=payload)
+            self.assertEqual(200, first.status_code, first.content)
+            self.assertTrue(first.json()["reconciled"])
+            self.assertEqual("canceled", first.json()["task_status"])
+            second = self.client.post(
+                "/tasks/reconcile_historical_cancellation", json=payload)
+            self.assertEqual(200, second.status_code, second.content)
+            self.assertFalse(second.json()["reconciled"])
+        finally:
+            self.get_portal().call(_delete_task_state, task.booking.id)
+
+    def test_historical_cancellation_refuses_completion_proof(self):
+        fleet, robot, task = self._save_historical_completion_fixture(
+            "historical-proven-complete")
+        try:
+            response = self.client.post(
+                "/tasks/reconcile_historical_cancellation",
+                json={
+                    "fleet": fleet.name, "robot": robot,
+                    "expected_task_id": task.booking.id,
+                    "reason": "operator_confirmed_historical_abandonment",
+                },
+            )
+            self.assertEqual(409, response.status_code, response.content)
+        finally:
+            self.get_portal().call(_delete_task_state, task.booking.id)
 
     def test_interrupt_task(self):
         with patch.object(get_tasks_service(), "call") as mock:

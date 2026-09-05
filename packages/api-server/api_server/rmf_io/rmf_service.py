@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import logging
 from asyncio import Future
 from uuid import uuid4
@@ -76,11 +77,34 @@ class RmfService(contextlib.AbstractContextManager):
         fut = Future()
         self._requests[req_id] = fut
         self._api_pub.publish(msg)
-        logging.info(f"sent request '{req_id}'")
+        request_type = "unknown"
+        task_id = "unknown"
+        try:
+            request_json = json.loads(payload)
+            request_type = str(request_json.get("type", "unknown"))
+            task_id = str(
+                request_json.get(
+                    "task_id", request_json.get("for_task", "unknown")
+                )
+            )
+        except (TypeError, ValueError):
+            pass
+        logging.info(
+            "sent RMF request request_id=%s type=%s task_id=%s",
+            req_id,
+            request_type,
+            task_id,
+        )
         logging.debug(msg)
         try:
             return await asyncio.wait_for(fut, timeout)
         except asyncio.TimeoutError as e:
+            logging.error(
+                "RMF request timed out request_id=%s type=%s task_id=%s",
+                req_id,
+                request_type,
+                task_id,
+            )
             raise HTTPException(500, "rmf service timed out") from e
         finally:
             del self._requests[req_id]

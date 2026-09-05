@@ -29,23 +29,29 @@ from rmf_fleet_msgs.msg import MutexGroupManualRelease as RmfMutexGroupManualRel
 from rmf_ingestor_msgs.msg import IngestorState as RmfIngestorState
 from rmf_lift_msgs.msg import LiftRequest as RmfLiftRequest
 from rmf_lift_msgs.msg import LiftState as RmfLiftState
+from rmf_task_msgs.msg import TaskSummary as RmfTaskSummary
 from rmf_task_msgs.srv import CancelTask as RmfCancelTask
 from rmf_task_msgs.srv import SubmitTask as RmfSubmitTask
 from rosidl_runtime_py.convert import message_to_ordereddict
 from std_msgs.msg import Bool as BoolMsg
 
 from api_server.fast_io.singleton_dep import singleton_dep
+from api_server.logging import default_logger
 from api_server.models.user import User
 from api_server.repositories.alerts import AlertRepository
 from api_server.repositories.cached_files import get_cached_file_repo
 from api_server.repositories.rmf import RmfRepository
+from api_server.repositories.tasks import TaskRepository
 from api_server.rmf_io.events import (
     AlertEvents,
     RmfEvents,
+    TaskEvents,
     get_alert_events,
     get_rmf_events,
+    get_task_events,
 )
 from api_server.ros import get_ros_node
+from api_server.task_summary_reconciliation import reconcile_terminal_task_summary
 
 from .models import (
     BeaconState,
@@ -67,7 +73,9 @@ class RmfGateway:
         ros_node: rclpy.node.Node,
         alert_events: AlertEvents,
         alert_repo: AlertRepository,
+        task_repo: TaskRepository,
         rmf_events: RmfEvents,
+        task_events: TaskEvents,
         rmf_repo: RmfRepository,
         loop: asyncio.AbstractEventLoop,
         *,
@@ -77,7 +85,9 @@ class RmfGateway:
         self._ros_node = ros_node
         self._alert_events = alert_events
         self._alert_repo = alert_repo
+        self._task_repo = task_repo
         self._rmf_events = rmf_events
+        self._task_events = task_events
         self._rmf_repo = rmf_repo
         self._loop = loop
         self._logger = logger or logging.getLogger()
@@ -146,11 +156,32 @@ class RmfGateway:
         raises HTTPException if service call fails.
         """
         fut = client.call_async(req)
-        try:
-            result = await asyncio.wait_for(fut, timeout=timeout)
-            return result
-        except asyncio.TimeoutError as e:
-            raise HTTPException(503, "ros service call timed out") from e
+        deadline = asyncio.get_running_loop().time() + timeout
+        # rclpy.task.Future is awaitable under some ROS/Python combinations,
+        # but Jazzy/Python 3.12 cannot be passed to asyncio.wait_for
+        # ("Task got bad yield"). Let the ROS executor complete it and poll
+        # without blocking FastAPI's asyncio loop.
+        while not fut.done():
+            if asyncio.get_running_loop().time() >= deadline:
+                raise HTTPException(503, "ros service call timed out")
+            await asyncio.sleep(0.02)
+        exception = fut.exception()
+        if exception is not None:
+            raise HTTPException(503, f"ros service call failed: {exception}")
+        return fut.result()
+
+    async def cancel_queued_task(self, task_id: str, timeout: float = 3.0) -> bool:
+        """Cancel through the dispatcher service when no TaskManager owns it.
+
+        The JSON ApiRequest cancellation path is handled by robot
+        TaskManagers. A queued/standby task may not have an owner yet, so that
+        path can time out forever. The dispatcher CancelTask service is the
+        authoritative fallback for those pre-execution states.
+        """
+        req = RmfCancelTask.Request()
+        req.task_id = task_id
+        result = await self.call_service(self._cancel_task_srv, req, timeout)
+        return bool(result.success)
 
     def _process_building_map(
         self,
@@ -241,6 +272,42 @@ class RmfGateway:
             10,
         )
         self._subscriptions.append(ingestor_states_sub)
+
+        def handle_task_summary(msg):
+            msg = cast(RmfTaskSummary, msg)
+            terminal_states = {
+                RmfTaskSummary.STATE_COMPLETED,
+                RmfTaskSummary.STATE_FAILED,
+                RmfTaskSummary.STATE_CANCELED,
+            }
+            if msg.state not in terminal_states or not msg.task_id:
+                return
+
+            async def save_terminal_summary():
+                finish_millis = (
+                    int(msg.end_time.sec) * 1000
+                    + int(msg.end_time.nanosec) // 1_000_000
+                )
+                reconciled = await reconcile_terminal_task_summary(
+                    self._task_repo, msg.task_id, msg.state, finish_millis
+                )
+                if reconciled is not None:
+                    self._task_events.task_states.on_next(reconciled)
+                    self._logger.info(
+                        "terminal task summary reconciled task_id=%s status=%s",
+                        msg.task_id,
+                        reconciled.status.value,
+                    )
+
+            self._loop.create_task(save_terminal_summary())
+
+        task_summaries_sub = self._ros_node.create_subscription(
+            RmfTaskSummary,
+            "task_summaries",
+            handle_task_summary,
+            100,
+        )
+        self._subscriptions.append(task_summaries_sub)
 
         def handle_building_map(msg):
             async def save(building_map: BuildingMap):
@@ -424,7 +491,9 @@ def get_rmf_gateway():
         get_ros_node(),
         get_alert_events(),
         AlertRepository(),
+        TaskRepository(User.get_system_user(), default_logger),
         get_rmf_events(),
+        get_task_events(),
         RmfRepository(User.get_system_user()),
         asyncio.get_event_loop(),
     )
