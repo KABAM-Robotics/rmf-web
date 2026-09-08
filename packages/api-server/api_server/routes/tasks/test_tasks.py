@@ -1,4 +1,5 @@
 import time
+import json
 
 from fastapi import HTTPException
 from unittest.mock import patch
@@ -110,6 +111,20 @@ class TestTasksRoute(AppFixture):
         )
         self.assertFalse(normalize_contradictory_terminal_state(canceled))
         self.assertEqual(mdl.TaskStatus.standby, canceled.status)
+
+    def test_replayed_task_log_is_idempotent(self):
+        """Adapters may replay a cumulative log after reconnecting."""
+        task_log = make_task_log(task_id=f"replay_{uuid4()}")
+        repo = TaskRepository(self.admin_user, default_logger)
+        portal = self.get_portal()
+
+        portal.call(repo.save_task_log, task_log)
+        portal.call(repo.save_task_log, task_log)
+
+        saved = portal.call(repo.get_task_log, task_log.task_id, None)
+        self.assertIsNotNone(saved)
+        self.assertEqual(task_log, saved)
+
 
     def test_query_task_states(self):
         resp = self.client.get(f"/tasks?task_id={self.task_states[0].booking.id}")
@@ -671,6 +686,29 @@ class TestTasksRoute(AppFixture):
 
 
 class TestDispatchTask(AppFixture):
+    def test_accepted_robot_task_preserves_long_delivery_label(self):
+        task_id = str(uuid4())
+        summary = ", ".join(["1x Room Delivery"] * 18)
+        self.assertEqual(322, len(summary))
+        label = "delivery_items=" + summary
+        with patch.object(get_tasks_service(), "call") as mock:
+            mock.return_value = json.dumps({"success": True, "state": {
+                "booking": {"id": task_id, "labels": [label]}}})
+            response = self.client.post("/tasks/robot_task", json={
+                "type": "robot_task_request", "fleet": "Keenon_W3", "robot": "Anna",
+                "request": {"category": "test", "description": "test"}})
+            self.assertEqual(200, response.status_code, response.content)
+            self.assertEqual(task_id, response.json()["state"]["booking"]["id"])
+            mock.assert_called_once()
+        state = self.client.get(f"/tasks/{task_id}/state")
+        self.assertEqual(200, state.status_code, state.content)
+        self.assertEqual([label], state.json()["booking"]["labels"])
+        async def read_stored_label():
+            from api_server.models.tortoise_models import TaskLabel
+            row = await TaskLabel.get(state_id=task_id, label_name="delivery_items")
+            return row.label_value
+        self.assertEqual(summary, self.get_portal().call(read_stored_label))
+
     def post_task_request(self):
         return self.client.post(
             "/tasks/dispatch_task",

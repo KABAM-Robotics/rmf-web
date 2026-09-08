@@ -37,6 +37,7 @@ from .models import tortoise_models as ttm
 from .repositories import TaskRepository
 from .rmf_io import RmfEvents
 from .types import is_coroutine
+from .task_log_migration import verify_task_log_schema
 
 
 async def on_sio_connect(_sid: str, _environ: dict, auth: dict | None = None):
@@ -86,6 +87,11 @@ async def lifespan(_app: FastIO):
     )
     # FIXME: do this outside the app as recommended by the docs
     await Tortoise.generate_schemas()
+    try:
+        await verify_task_log_schema()
+    except Exception:
+        await Tortoise.close_connections()
+        raise
     shutdown_cbs.append(Tortoise.close_connections())
 
     await stack.enter_async_context(get_cached_file_repo)

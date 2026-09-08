@@ -6,6 +6,7 @@ from tortoise.fields import (
     ForeignKeyRelation,
     JSONField,
     ReverseRelation,
+    TextField,
 )
 from tortoise.models import Model
 
@@ -34,7 +35,10 @@ class TaskState(Model):
 class TaskLabel(Model):
     state = ForeignKeyField("models.TaskState", null=True, related_name="labels")
     label_name = CharField(255, null=False, index=True)
-    label_value = CharField(255, null=True, index=True)
+    # Booking metadata may contain a complete multi-item delivery summary.
+    # A local metadata limit must not turn an already accepted RMF task into
+    # an HTTP 500. SQLite's existing VARCHAR column also stores full text.
+    label_value = TextField(null=True)
 
 
 class TaskEventLog(Model):
@@ -60,6 +64,9 @@ class TaskEventLogPhases(Model):
     log: ReverseRelation["TaskEventLogPhasesLog"]
     events: ReverseRelation["TaskEventLogPhasesEvents"]
 
+    class Meta:  # type: ignore
+        unique_together = ("task", "phase")
+
 
 class TaskEventLogPhasesLog(Model, LogMixin):
     phase: ForeignKeyRelation[TaskEventLogPhases] = ForeignKeyField(
@@ -67,7 +74,7 @@ class TaskEventLogPhasesLog(Model, LogMixin):
     )
 
     class Meta:  # type: ignore
-        unique_together = ("id", "seq")
+        unique_together = ("phase", "seq")
 
 
 class TaskEventLogPhasesEvents(Model):
@@ -77,6 +84,9 @@ class TaskEventLogPhasesEvents(Model):
     event = CharField(255)
     log: ReverseRelation["TaskEventLogPhasesEventsLog"]
 
+    class Meta:  # type: ignore
+        unique_together = ("phase", "event")
+
 
 class TaskEventLogPhasesEventsLog(Model, LogMixin):
     event: ForeignKeyRelation[TaskEventLogPhasesEvents] = ForeignKeyField(
@@ -84,7 +94,7 @@ class TaskEventLogPhasesEventsLog(Model, LogMixin):
     )
 
     class Meta:  # type: ignore
-        unique_together = ("id", "seq")
+        unique_together = ("event", "seq")
 
 
 class TaskFavorite(Model):

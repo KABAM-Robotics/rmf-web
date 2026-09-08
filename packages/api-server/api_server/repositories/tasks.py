@@ -19,7 +19,7 @@ from api_server.models import tortoise_models as ttm
 from api_server.models.tortoise_models import TaskRequest as DbTaskRequest
 from api_server.models.tortoise_models import TaskState as DbTaskState
 from fastapi import Depends, HTTPException
-from tortoise.exceptions import FieldError, IntegrityError
+from tortoise.exceptions import FieldError
 from tortoise.expressions import Expression, Q
 from tortoise.query_utils import Prefetch
 from tortoise.transactions import in_transaction
@@ -375,9 +375,15 @@ class TaskRepository:
                     phase=db_phase, event=event_id
                 )
             )[0]
-            for log in logs:
-                await ttm.TaskEventLogPhasesEventsLog.create(
-                    event=db_event, **log.model_dump()
+            if logs:
+                await ttm.TaskEventLogPhasesEventsLog.bulk_create(
+                    [
+                        ttm.TaskEventLogPhasesEventsLog(
+                            event=db_event, **log.model_dump()
+                        )
+                        for log in logs
+                    ],
+                    ignore_conflicts=True,
                 )
 
     async def _savePhaseLogs(
@@ -390,35 +396,42 @@ class TaskRepository:
                 )
             )[0]
             if phase.log:
-                for log in phase.log:
-                    await ttm.TaskEventLogPhasesLog.create(
-                        phase=db_phase,
-                        **log.model_dump(),
-                    )
+                await ttm.TaskEventLogPhasesLog.bulk_create(
+                    [
+                        ttm.TaskEventLogPhasesLog(
+                            phase=db_phase,
+                            **log.model_dump(),
+                        )
+                        for log in phase.log
+                    ],
+                    ignore_conflicts=True,
+                )
             if phase.events:
                 await self._saveEventLogs(db_phase, phase.events)
 
     async def _saveTaskLogs(
         self, db_task_log: ttm.TaskEventLog, logs: Sequence[LogEntry]
     ):
-        for log in logs:
-            await ttm.TaskEventLogLog.create(
-                task=db_task_log,
-                seq=log.seq,
-                unix_millis_time=log.unix_millis_time,
-                tier=log.tier.name,
-                text=log.text,
-            )
+        await ttm.TaskEventLogLog.bulk_create(
+            [
+                ttm.TaskEventLogLog(
+                    task=db_task_log,
+                    seq=log.seq,
+                    unix_millis_time=log.unix_millis_time,
+                    tier=log.tier.name,
+                    text=log.text,
+                )
+                for log in logs
+            ],
+            ignore_conflicts=True,
+        )
 
     async def save_task_log(self, task_log: TaskEventLog) -> None:
         async with in_transaction():
             db_task_log = (
                 await ttm.TaskEventLog.get_or_create(task_id=task_log.task_id)
             )[0]
-            try:
-                if task_log.log:
-                    await self._saveTaskLogs(db_task_log, task_log.log)
-                if task_log.phases:
-                    await self._savePhaseLogs(db_task_log, task_log.phases)
-            except IntegrityError as e:
-                self.logger.error(e)
+            if task_log.log:
+                await self._saveTaskLogs(db_task_log, task_log.log)
+            if task_log.phases:
+                await self._savePhaseLogs(db_task_log, task_log.phases)
