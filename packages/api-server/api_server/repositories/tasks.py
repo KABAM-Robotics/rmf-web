@@ -2,12 +2,6 @@ from datetime import datetime, timezone
 from typing import Annotated, Sequence
 
 import tortoise.functions as tfuncs
-from fastapi import Depends, HTTPException
-from tortoise.exceptions import FieldError, IntegrityError
-from tortoise.expressions import Expression, Q
-from tortoise.query_utils import Prefetch
-from tortoise.transactions import in_transaction
-
 from api_server.authenticator import user_dep
 from api_server.logging import LoggerAdapter, get_logger
 from api_server.models import (
@@ -24,6 +18,11 @@ from api_server.models import (
 from api_server.models import tortoise_models as ttm
 from api_server.models.tortoise_models import TaskRequest as DbTaskRequest
 from api_server.models.tortoise_models import TaskState as DbTaskState
+from fastapi import Depends, HTTPException
+from tortoise.exceptions import FieldError, IntegrityError
+from tortoise.expressions import Expression, Q
+from tortoise.query_utils import Prefetch
+from tortoise.transactions import in_transaction
 
 
 class TaskRepository:
@@ -67,6 +66,29 @@ class TaskRepository:
 
     async def save_task_state(self, task_state: TaskState) -> None:
         async with in_transaction():
+            # RENYU fix for labels, requester and request time disappearing. Either something in rmf core or fleet adapter is removing them from tasks
+            # The original dispatch task has correct details so I'm just passing in the old values to future updates of tasks
+            # Get old task state and old values
+            old_task_state = await self.get_task_state(task_state.booking.id)
+            try:
+                old_labels = old_task_state.booking.labels
+            except Exception as e:
+                old_labels = None
+            try:
+                old_requester = old_task_state.booking.requester
+            except Exception as e:
+                old_requester = None
+            try:
+                old_request_time = old_task_state.booking.unix_millis_request_time
+            except Exception as e:
+                old_request_time = None
+            # Replace booking labels with old labels, requester and request time
+            if old_labels:
+                task_state.booking.labels = old_labels
+            if old_requester:
+                task_state.booking.requester = old_requester
+            if old_request_time:
+                task_state.booking.unix_millis_request_time = old_request_time
             db_task_state, created = await DbTaskState.update_or_create(
                 {
                     "data": task_state.model_dump_json(),
