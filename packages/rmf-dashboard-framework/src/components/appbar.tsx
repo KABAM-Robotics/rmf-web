@@ -114,6 +114,8 @@ export const AppBar = React.memo(
     const [openAdminActionsDialog, setOpenAdminActionsDialog] = React.useState(false);
     const [openFireAlarmTriggerResetDialog, setOpenFireAlarmTriggerResetDialog] =
       React.useState(false);
+    const [openFireAlarmTriggerTriggerDialog, setOpenFireAlarmTriggerTriggerDialog] =
+      React.useState(false);
     const [fireAlarmPreviousTrigger, setFireAlarmPreviousTrigger] = React.useState<
       FireAlarmTriggerState | undefined
     >(undefined);
@@ -243,6 +245,24 @@ export const AppBar = React.memo(
       }
 
       setOpenFireAlarmTriggerResetDialog(false);
+      setOpenAdminActionsDialog(false);
+    }, [rmfApi, showAlert]);
+
+    const handleTriggerFireAlarmTrigger = React.useCallback<React.MouseEventHandler>(async () => {
+      //RENYU FIX
+      try {
+        const resp =
+          await rmfApi.buildingApi.triggerFireAlarmTriggerBuildingMapTriggerFireAlarmTriggerPost();
+        if (resp.data.trigger) {
+          showAlert('success', 'Requested to trigger fire alarm');
+        } else {
+          showAlert('error', 'Failed to trigger fire alarm');
+        }
+      } catch (e) {
+        showAlert('error', `Failed to trigger fire alarm: ${(e as Error).message}`);
+      }
+
+      setOpenFireAlarmTriggerTriggerDialog(false);
       setOpenAdminActionsDialog(false);
     }, [rmfApi, showAlert]);
 
@@ -538,6 +558,13 @@ export const AppBar = React.memo(
                   )}
                   <Button
                     variant="contained"
+                    onClick={() => setOpenFireAlarmTriggerTriggerDialog(true)}
+                    startIcon={<LocalFireDepartment />}
+                  >
+                    Trigger fire alarm
+                  </Button>
+                  <Button
+                    variant="contained"
                     onClick={() => setOpenFireAlarmTriggerResetDialog(true)}
                     startIcon={<LocalFireDepartment />}
                   >
@@ -561,6 +588,21 @@ export const AppBar = React.memo(
             <Typography color="warning.main">
               Warning: Please ensure that all other systems are back online and that it is safe to
               resume robot operations.
+            </Typography>
+          </ConfirmationDialog>
+        )}
+        {openFireAlarmTriggerTriggerDialog && (
+          <ConfirmationDialog
+            confirmText="Confirm trigger"
+            cancelText="Cancel"
+            open={true}
+            title={'Trigger fire alarm'}
+            submitting={undefined}
+            onClose={() => setOpenFireAlarmTriggerTriggerDialog(false)}
+            onSubmit={handleTriggerFireAlarmTrigger}
+          >
+            <Typography color="warning.main">
+              Warning: This will trigger the fire alarm.
             </Typography>
           </ConfirmationDialog>
         )}

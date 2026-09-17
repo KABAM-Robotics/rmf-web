@@ -333,9 +333,9 @@ export function TaskForm({
     ComposeCleanTaskDefinition,
     CustomComposeTaskDefinition,
   ],
-
+  /* eslint-disable @typescript-eslint/no-unused-vars */
   cleaningZones = [],
-
+  /* eslint-disable @typescript-eslint/no-unused-vars */
   patrolWaypoints = [],
   pickupZones = [],
   cartIds = [],
@@ -710,7 +710,8 @@ export function TaskForm({
       return;
     }
 
-    const request = configureTaskRequest(false);
+    // changed const request to var request
+    var request = configureTaskRequest(false);
     if (!request) {
       return;
     }
@@ -737,7 +738,7 @@ export function TaskForm({
       return;
     }
 
-    const request = configureTaskRequest(false);
+    var request = configureTaskRequest(false);
     if (!request) {
       return;
     }

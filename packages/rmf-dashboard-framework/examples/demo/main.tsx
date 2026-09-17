@@ -61,14 +61,18 @@ const tasksWorkspace: InitialWindow[] = [
 ];
 
 export default function App() {
+  const hostIP = import.meta.env.VITE_HOST_IP || 'localhost';
+  const apiServerPort = import.meta.env.VITE_API_SERVER_PORT || '8000';
+  const apiServerUrl = `http://${hostIP}:${apiServerPort}`;
+  const trajectoryServerUrl = import.meta.env.VITE_TRAJECTORY_SERVER_URL || 'http://localhost:8006';
   return (
     <RmfDashboard
-      apiServerUrl="http://localhost:8000"
-      trajectoryServerUrl="http://localhost:8006"
+      apiServerUrl={apiServerUrl}
+      trajectoryServerUrl={trajectoryServerUrl}
       authenticator={new StubAuthenticator()}
       helpLink="https://osrf.github.io/ros2multirobotbook/rmf-core.html"
       reportIssueLink="https://github.com/open-rmf/rmf-web/issues"
-      resources={{ fleets: {}, logos: { header: '/resources/defaultLogo.png' } }}
+      resources={{ fleets: {}, logos: { header: '/resources/kabam.png' } }}
       tasks={{
         allowedTasks: [
           { taskDefinitionId: 'patrol' },

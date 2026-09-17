@@ -369,10 +369,25 @@ export function TaskDataGridTable({
   );
 
   const taskData: TaskData[] = tasks.data.map((state) => {
-    return {
-      state,
-      requestLabel: getTaskBookingLabelFromTaskState(state),
-    };
+    // RENYU fix to display charge tasks properly
+    if (state.booking.id.startsWith("Charge")){
+      state.booking.unix_millis_request_time = state.unix_millis_start_time;
+      state.booking.requester = "System";
+      var chargeTaskRequestLabel = {
+        destination: "charger"
+      };
+      return{
+        state,
+        requestLabel: chargeTaskRequestLabel,
+      };
+    }
+    else{
+      return {
+        state,
+        requestLabel: getTaskBookingLabelFromTaskState(state),
+      };
+    }
+
   });
 
   return (

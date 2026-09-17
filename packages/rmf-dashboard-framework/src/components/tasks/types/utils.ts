@@ -86,6 +86,10 @@ export function getShortDescription(
       return makeDeliveryCustomTaskShortDescription(taskRequest.description, taskDisplayName);
     case CustomComposeTaskDefinition.taskDefinitionId:
       return makeCustomComposeTaskShortDescription(taskRequest.description);
+    // RENYU added 'clean' switch case to display on schedule properly
+    case 'clean':
+      return `[Clean] zone [${taskRequest.description.zone}] `;
+
     default:
       return `[Unknown] type "${taskRequest.description.category}"`;
   }

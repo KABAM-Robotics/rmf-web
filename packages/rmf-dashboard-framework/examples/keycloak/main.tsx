@@ -61,16 +61,20 @@ const tasksWorkspace: InitialWindow[] = [
 ];
 
 export default function App() {
+  const hostIP = import.meta.env.VITE_HOST_IP || 'localhost';
+  const apiServerPort = import.meta.env.VITE_API_SERVER_PORT || '8000';
+  const apiServerUrl = `https://${hostIP}/server`;
+  const trajectoryServerUrl = import.meta.env.VITE_TRAJECTORY_SERVER_URL || 'http://localhost:8006';
   return (
     <RmfDashboard
-      apiServerUrl="http://localhost:8000"
-      trajectoryServerUrl="http://localhost:8006"
+      apiServerUrl={apiServerUrl}
+      trajectoryServerUrl={trajectoryServerUrl}
       authenticator={
         new KeycloakAuthenticator(
           {
             clientId: 'dashboard',
             realm: 'rmf-web',
-            url: 'http://localhost:8080',
+            url: `https://${hostIP}:8443`,
           },
           // This must be a full url, if the dashboard is served under a subpath, this
           // must be set approriately.

@@ -236,8 +236,12 @@ export const Map = styled((props: MapProps) => {
     }
 
     (async () => {
-      useLoader.preload(TextureLoader, currentLevel.images[0].data);
-      setImageUrl(currentLevel.images[0].data);
+      // RENYU cache loads with server address instead of https, so change url to public facing https url
+      var mapUrl = currentLevel.images[0].data;
+      mapUrl = mapUrl.replace('http://', 'https://');
+      mapUrl = mapUrl.replace(':8000', '/server');
+      useLoader.preload(TextureLoader, mapUrl);
+      setImageUrl(mapUrl);
     })();
 
     buildingMap &&
