@@ -1,0 +1,47 @@
+services:
+  # rmf-dashboard:
+  #   image: rmf_web_c_proxy:jazzy
+  #   network_mode: host
+  #   volumes:
+  #     - /dev/shm:/dev/shm
+  #     - ./keycloak-example.pub:/rmf-web/packages/rmf-dashboard-framework/keycloak-example.pub
+  #   environment:
+  #     VITE_TRAJECTORY_SERVER_URL: https://$HOSTNAME/trajectoryws
+  #     VITE_API_SERVER_PORT: $API_SERVER_PORT
+  #     VITE_HOST_IP: $HOSTNAME
+  #   command: ["pnpm", "run", "start:example", "examples/keycloak"]
+  rmf-api-server:
+    image: rmf_api_server:jazzy
+    network_mode: host
+    volumes:
+      - /dev/shm:/dev/shm
+      - ./keycloak-example.pub:/ws/packages/rmf-dashboard-framework/keycloak-example.pub
+      # - ./run_data:/ws/packages/api-server/run
+    environment:
+      VITE_TRAJECTORY_SERVER_URL: https://$HOSTNAME/trajectoryws
+      VITE_API_SERVER_PORT: $API_SERVER_PORT
+      VITE_HOST_IP: $HOSTNAME
+  keycloak-server:
+    image: quay.io/keycloak/keycloak:25.0.2
+    network_mode: host
+    volumes:
+      - ./keycloak_data:/opt/keycloak/data
+      - ./ssl/$SSL_CERT_FILENAME:/etc/x509/https/tls.crt
+      - ./ssl/$SSL_KEY_FILENAME:/etc/x509/https/tls.key
+    environment:
+      KEYCLOAK_ADMIN: $KEYCLOAK_ADMIN_USERNAME
+      KEYCLOAK_ADMIN_PASSWORD: $KEYCLOAK_ADMIN_PASSWORD
+    command:
+      - start
+      - --optimized
+      - --proxy-headers=xforwarded
+      - --hostname=$HOSTNAME
+      - --https-certificate-file=/etc/x509/https/tls.crt
+      - --https-certificate-key-file=/etc/x509/https/tls.key
+  nginx-proxy:
+    image: nginx:latest
+    network_mode: host
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl/$SSL_CERT_FILENAME:/etc/nginx/ssl/cert.pem
+      - ./ssl/$SSL_KEY_FILENAME:/etc/nginx/ssl/key.pem

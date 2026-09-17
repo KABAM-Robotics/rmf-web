@@ -7,3 +7,9 @@ __pycache__/
 /.venv/
 
 *.tsbuildinfo
+
+
+keycloak_data/
+run_data/
+ssl/
+keycloak-example.pub

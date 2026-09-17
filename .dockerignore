@@ -1,0 +1,26 @@
+# Ignore node_modules directory (useful for Node.js projects)
+node_modules
+
+# Ignore any build artifacts
+build/
+dist/
+
+# Ignore Dockerfile itself (if you don't need it in the image)
+Dockerfile
+
+# Ignore .env files (you should manage these separately)
+.venv
+
+# Ignore test files or folders
+tests/
+
+# Ignore logs
+*.log
+
+# Ignore IDE/editor settings (e.g., VSCode, JetBrains, etc.)
+.vscode/
+.idea/
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
