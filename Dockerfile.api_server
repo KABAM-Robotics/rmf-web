@@ -46,9 +46,13 @@ FROM rmf AS api_server
 ARG RMF_WEB_COMMIT="main"
 
 # install pnpm
+# Pin the installer version: unpinned installs drifted to pnpm 10, whose
+# lockfile format differs from the committed pnpm-lock.yaml. The installer
+# places the binary under $PNPM_HOME/bin, which the old PATH did not cover.
+ENV PNPM_VERSION=9.15.9
 RUN curl -fsSL https://get.pnpm.io/install.sh | bash -
 ENV PNPM_HOME=/root/.local/share/pnpm
-ENV PATH="$PNPM_HOME:$PATH"
+ENV PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
 
 # setup pnpm and install node
 # this needs to be a separate step so that pnpm can be found
