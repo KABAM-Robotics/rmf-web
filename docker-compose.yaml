@@ -4,7 +4,9 @@ services:
     network_mode: host
     volumes:
       # - /dev/shm:/dev/shm
-      - ./keycloak-example.pub:/rmf-web/packages/rmf-dashboard-framework/keycloak-example.pub
+      - ./keycloak-example.pub:/rmf-web/packages/rmf-dashboard-framework/keycloak-example.pub:ro
+    environment:
+      RMF_JWT_PUBLIC_KEY: /rmf-web/packages/rmf-dashboard-framework/keycloak-example.pub
       # - ./run_data:/rmf-web/packages/api-server/run
     environment:
       RMW_IMPLEMENTATION: rmw_cyclonedds_cpp

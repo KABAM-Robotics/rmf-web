@@ -12,4 +12,4 @@ __pycache__/
 keycloak_data/
 run_data/
 ssl/
-keycloak-example.pub
+keycloak-example.pub.pnpm-store/

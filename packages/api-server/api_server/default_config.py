@@ -29,9 +29,13 @@ config = {
     # a user that is automatically given admin privileges, note that this does not guarantee that the user exists in the identity provider.
     "builtin_admin": "admin",
     # path to a PEM encoded RSA public key which is used to verify JWT tokens, if the path is relative, it is based on the working dir.
-    "jwt_public_key": f"{here}/../../rmf-dashboard-framework/keycloak-example.pub",
+    # Keycloak deployments set RMF_JWT_PUBLIC_KEY to the realm's public key
+    # (keycloak-setup.bash -o writes it). Without it the server falls back to
+    # the shared-secret stub, which is what sites without keycloak (M Hotel)
+    # run. Never leave the stub secret on an internet-facing deployment.
+    "jwt_public_key": os.getenv("RMF_JWT_PUBLIC_KEY") or None,
     # jwt secret, this is mutually exclusive with `jwt_public_key`.
-    "jwt_secret": None,
+    "jwt_secret": None if os.getenv("RMF_JWT_PUBLIC_KEY") else os.getenv("RMF_JWT_SECRET", "rmfisawesome"),
     # url to the oidc endpoint, used to authenticate rest requests, it should point to the well known endpoint, e.g.
     # http://localhost:8080/auth/realms/rmf-web/.well-known/openid-configuration.
     # NOTE: This is ONLY used for documentation purposes, the "jwt_public_key" will be the
@@ -42,7 +46,7 @@ config = {
     "aud": "rmf_api_server",
     # url or string that identifies the entity that issued the jwt token
     # Used to verify the "iss" claim
-    "iss": f"https://{host_ip}:8443/realms/rmf-web",
+    "iss": os.getenv("RMF_JWT_ISSUER", f"https://{host_ip}:8443/realms/rmf-web" if os.getenv("RMF_JWT_PUBLIC_KEY") else "stub"),
     # Optional namespace prefix used as a fallback when looking up the
     # `preferred_username` claim. Some identity providers (verified for
     # Auth0) silently filter non-namespaced custom claims on standard OIDC
