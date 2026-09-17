@@ -57,3 +57,16 @@ async def reset_fire_alarm_trigger(
         unix_millis_time=round(datetime.now().timestamp() * 1000), trigger=False
     )
     return fire_alarm_trigger_state
+
+@router.post("/trigger_fire_alarm_trigger", response_model=FireAlarmTriggerState)
+async def trigger_fire_alarm_trigger(
+    logger: Annotated[LoggerAdapter, Depends(get_logger)],
+    rmf_gateway: Annotated[RmfGateway, Depends(get_rmf_gateway)],
+):
+    # TODO: enforce with authz
+    logger.info("Fire alarm triggered")
+    rmf_gateway.trigger_fire_alarm_trigger()
+    fire_alarm_trigger_state = FireAlarmTriggerState(
+        unix_millis_time=round(datetime.now().timestamp() * 1000), trigger=True
+    )
+    return fire_alarm_trigger_state

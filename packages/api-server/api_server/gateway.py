@@ -29,6 +29,8 @@ from rmf_fleet_msgs.msg import MutexGroupManualRelease as RmfMutexGroupManualRel
 from rmf_ingestor_msgs.msg import IngestorState as RmfIngestorState
 from rmf_lift_msgs.msg import LiftRequest as RmfLiftRequest
 from rmf_lift_msgs.msg import LiftState as RmfLiftState
+from rmf_task_msgs.srv import CancelTask as RmfCancelTask
+from rmf_task_msgs.srv import SubmitTask as RmfSubmitTask
 from rosidl_runtime_py.convert import message_to_ordereddict
 from std_msgs.msg import Bool as BoolMsg
 
@@ -93,6 +95,12 @@ class RmfGateway:
 
         self._adapter_lift_req = self._ros_node.create_publisher(
             RmfLiftRequest, "adapter_lift_requests", transient_qos
+        )
+        self._submit_task_srv = self._ros_node.create_client(
+            RmfSubmitTask, "submit_task"
+        )
+        self._cancel_task_srv = self._ros_node.create_client(
+            RmfCancelTask, "cancel_task"
         )
 
         self._delivery_alert_response = self._ros_node.create_publisher(
@@ -402,6 +410,11 @@ class RmfGateway:
         reset_msg = BoolMsg()
         reset_msg.data = False
         self._fire_alarm_trigger.publish(reset_msg)
+
+    def trigger_fire_alarm_trigger(self):
+        trigger_msg = BoolMsg()
+        trigger_msg.data = True
+        self._fire_alarm_trigger.publish(trigger_msg)
 
 
 @singleton_dep
