@@ -1,23 +1,37 @@
+import os
+from os.path import dirname
+
+
+api_server_port = os.getenv("VITE_API_SERVER_PORT", "8000")
+host_ip = os.getenv("VITE_HOST_IP", "localhost")
+public_url = f"http://{host_ip}:{api_server_port}"
+here = dirname(__file__)
+run_dir = f"{here}/../run"
+
+
 # pylint: disable=line-too-long
 config = {
     # ip or hostname to bind the socket to, this only applies when running the server in
     # standalone mode.
-    "host": "127.0.0.1",
+    "host": "0.0.0.0",
     # port to bind to, this only applies when running the server in standalone mode.
-    "port": 8000,
-    "db_url": "sqlite://:memory:",
+    "port": api_server_port,
+    # "port": "8000",
+    "db_url": f"sqlite://{run_dir}/db.sqlite3",
     # url that rmf-server is being served on.
     # When being a proxy, this must be the url that rmf-server is mounted on.
     # E.g. https://example.com/rmf/api/v1
-    "public_url": "http://localhost:8000",
-    "cache_directory": "run/cache",  # The directory where cached files should be stored.
-    "log_level": "WARNING",  # https://docs.python.org/3.8/library/logging.html#levels
+    "public_url": public_url,
+    # "public_url": f"http://localhost:{api_server_port}",
+    # "public_url": "http://localhost:8000",
+    "cache_directory": f"{run_dir}/cache",  # The directory where cached files should be stored.
+    "log_level": "INFO",  # https://docs.python.org/3.8/library/logging.html#levels
     # a user that is automatically given admin privileges, note that this does not guarantee that the user exists in the identity provider.
     "builtin_admin": "admin",
     # path to a PEM encoded RSA public key which is used to verify JWT tokens, if the path is relative, it is based on the working dir.
-    "jwt_public_key": None,
+    "jwt_public_key": f"{here}/../../rmf-dashboard-framework/keycloak-example.pub",
     # jwt secret, this is mutually exclusive with `jwt_public_key`.
-    "jwt_secret": "rmfisawesome",
+    "jwt_secret": None,
     # url to the oidc endpoint, used to authenticate rest requests, it should point to the well known endpoint, e.g.
     # http://localhost:8080/auth/realms/rmf-web/.well-known/openid-configuration.
     # NOTE: This is ONLY used for documentation purposes, the "jwt_public_key" will be the
@@ -28,7 +42,7 @@ config = {
     "aud": "rmf_api_server",
     # url or string that identifies the entity that issued the jwt token
     # Used to verify the "iss" claim
-    "iss": "stub",
+    "iss": f"https://{host_ip}:8443/realms/rmf-web",
     # Optional namespace prefix used as a fallback when looking up the
     # `preferred_username` claim. Some identity providers (verified for
     # Auth0) silently filter non-namespaced custom claims on standard OIDC
@@ -48,5 +62,5 @@ config = {
     # Timezone at which the scheduler will operate in. This must be the same
     # as the system timezone, as well as the client UI timezone. Cross-timezone
     # scheduling is currently not supported.
-    "timezone": "UTC",
+    "timezone": "Asia/Singapore",
 }

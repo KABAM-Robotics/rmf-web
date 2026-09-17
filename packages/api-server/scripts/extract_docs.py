@@ -1,11 +1,15 @@
 import argparse
 import atexit
 import json
+import os
 import os.path
 import signal
 import subprocess
 import time
 from urllib.request import urlopen
+
+api_server_port = os.getenv("VITE_API_SERVER_PORT", "8000")
+host_ip = os.getenv("VITE_HOST_IP", "8000")
 
 parser = argparse.ArgumentParser(
     description="Extracts openapi docs from the api server. NOTE: Make sure the api server is not running before running this."
@@ -34,7 +38,8 @@ time.sleep(5)  # wait for server to be ready
 outdir = f"{args.output}"
 os.makedirs(outdir, exist_ok=True)
 
-base_url = "http://localhost:8000"
+# base_url = "http://localhost:8000"
+base_url = f"http://{host_ip}:{api_server_port}"
 with urlopen(f"{base_url}/docs") as resp:
     html: bytes = resp.read()
     with open(f"{outdir}/index.html", "bw") as f:

@@ -17,12 +17,7 @@ async def sub_delivery_alerts(_req: SubscriptionRequest):
     return get_rmf_events().delivery_alerts.pipe(rxops.filter(lambda x: x is not None))
 
 
-@router.post(
-    "/{delivery_alert_id}/response",
-    response_model=DeliveryAlert,
-    deprecated=True,
-    description="This route is deprecated, please use the /alerts routes instead",
-)
+@router.post("/{delivery_alert_id}/response", response_model=DeliveryAlert)
 async def respond_to_delivery_alert(
     delivery_alert_id: str,
     category: DeliveryAlert.Category,

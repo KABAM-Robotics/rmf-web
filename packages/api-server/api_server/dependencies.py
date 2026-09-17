@@ -52,6 +52,8 @@ def time_between_query(alias: str, *, default: str | None = None):
             )
         else:
             parts = time_between.split(",")
+            if int(parts[1]) > 253402300799000:
+                parts[1] = "253402300799000"
             period = (
                 datetime.fromtimestamp(int(parts[0]) / 1000, timezone.utc),
                 datetime.fromtimestamp(int(parts[1]) / 1000, timezone.utc),
