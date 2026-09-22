@@ -13,6 +13,14 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Replaced at container start by docker/dashboard/inject-env.sh; left as-is
+         (and ignored by main.tsx) when served by the Vite dev server. -->
+    <script>
+      window.__RMF_DASHBOARD_CONFIG__ = {
+        rmfServerUrl: '__RMF_SERVER_URL__',
+        trajectoryServerUrl: '__TRAJECTORY_SERVER_URL__',
+      };
+    </script>
     <script type="module" src="/main.tsx"></script>
   </body>
 </html>

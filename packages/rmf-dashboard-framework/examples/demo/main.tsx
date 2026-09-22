@@ -61,10 +61,24 @@ const tasksWorkspace: InitialWindow[] = [
 ];
 
 export default function App() {
+  // Server URLs, in order of precedence:
+  //   1. runtime config injected into index.html by the container entrypoint
+  //      (docker/dashboard/inject-env.sh, from RMF_SERVER_URL /
+  //      TRAJECTORY_SERVER_URL) - one image serves every site;
+  //   2. Vite build-time env (VITE_HOST_IP, VITE_API_SERVER_PORT,
+  //      VITE_TRAJECTORY_SERVER_URL) for local builds;
+  //   3. localhost defaults.
+  // Un-replaced placeholders still start with "__" and are ignored.
+  const runtime = (window as any).__RMF_DASHBOARD_CONFIG__ ?? {};
+  const fromRuntime = (v: unknown) =>
+    typeof v === 'string' && v.length > 0 && !v.startsWith('__') ? v : undefined;
   const hostIP = import.meta.env.VITE_HOST_IP || 'localhost';
   const apiServerPort = import.meta.env.VITE_API_SERVER_PORT || '8000';
-  const apiServerUrl = `http://${hostIP}:${apiServerPort}`;
-  const trajectoryServerUrl = import.meta.env.VITE_TRAJECTORY_SERVER_URL || 'http://localhost:8006';
+  const apiServerUrl = fromRuntime(runtime.rmfServerUrl) ?? `http://${hostIP}:${apiServerPort}`;
+  const trajectoryServerUrl =
+    fromRuntime(runtime.trajectoryServerUrl) ??
+    import.meta.env.VITE_TRAJECTORY_SERVER_URL ??
+    'http://localhost:8006';
   return (
     <RmfDashboard
       apiServerUrl={apiServerUrl}
@@ -72,7 +86,7 @@ export default function App() {
       authenticator={new StubAuthenticator()}
       helpLink="https://osrf.github.io/ros2multirobotbook/rmf-core.html"
       reportIssueLink="https://github.com/open-rmf/rmf-web/issues"
-      resources={{ fleets: {}, logos: { header: '/resources/kabam.png' } }}
+      resources={{ fleets: {}, logos: { header: '/resources/defaultLogo.png' } }}
       tasks={{
         allowedTasks: [
           { taskDefinitionId: 'patrol' },

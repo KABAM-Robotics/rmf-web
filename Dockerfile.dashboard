@@ -1,0 +1,30 @@
+# Static build of the demo dashboard (packages/rmf-dashboard-framework/examples/demo)
+# served with `serve`. Server URLs are injected at container start from
+# RMF_SERVER_URL / TRAJECTORY_SERVER_URL (docker/dashboard/inject-env.sh), so the
+# image is site-agnostic - the same contract as the upstream ghcr dashboard image.
+#
+# Build (from the repo root):  docker build -f Dockerfile.dashboard -t rmf/dashboard .
+
+FROM docker.io/library/node:20-bookworm-slim AS build
+
+# Same pnpm pin as Dockerfile.api_server: the committed lockfile is a pnpm 9 lockfile.
+ENV PNPM_HOME=/root/.local/share/pnpm
+ENV PATH="$PNPM_HOME:$PNPM_HOME/bin:$PATH"
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git python3 \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=9.15.9 bash -
+
+WORKDIR /ws
+COPY ./ ./
+# --ignore-scripts: the root "prepare" runs husky (needs a real .git) and
+# api-server/ros-translator pull in pipenv-install (needs python venv); neither
+# is part of the static dashboard build.
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter rmf-dashboard-framework...
+RUN cd packages/rmf-dashboard-framework && pnpm build:example examples/demo
+
+FROM docker.io/library/node:20-bookworm-slim
+RUN npm install -g serve@14 && npm cache clean --force
+COPY --from=build /ws/packages/rmf-dashboard-framework/examples/demo/dist /opt/dashboard
+COPY docker/dashboard/inject-env.sh /opt/inject-env.sh
+EXPOSE 3000
+ENTRYPOINT ["/opt/inject-env.sh"]
