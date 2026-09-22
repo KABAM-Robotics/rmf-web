@@ -34,6 +34,22 @@ import { ShapeThreeRendering } from './shape-three-rendering';
 import { TextThreeRendering } from './text-maker';
 import { findSceneBoundingBoxFromThreeFiber } from './utils';
 
+/**
+ * Optional site-level rewrite of map image URLs (see the comment at the call
+ * site). Reads `window.__RMF_DASHBOARD_CONFIG__.mapImageUrlFrom/To`; an
+ * un-replaced placeholder (still starting with "__") or an empty value means
+ * "no rewrite".
+ */
+function rewriteMapImageUrl(url: string): string {
+  const cfg = (window as any).__RMF_DASHBOARD_CONFIG__ ?? {};
+  const from = typeof cfg.mapImageUrlFrom === 'string' ? cfg.mapImageUrlFrom : '';
+  const to = typeof cfg.mapImageUrlTo === 'string' ? cfg.mapImageUrlTo : '';
+  if (!from || from.startsWith('__') || to.startsWith('__')) {
+    return url;
+  }
+  return url.split(from).join(to);
+}
+
 const debug = Debug('MapApp');
 
 const TrajectoryUpdateInterval = 2000;
@@ -236,10 +252,14 @@ export const Map = styled((props: MapProps) => {
     }
 
     (async () => {
-      // RENYU cache loads with server address instead of https, so change url to public facing https url
-      var mapUrl = currentLevel.images[0].data;
-      mapUrl = mapUrl.replace('http://', 'https://');
-      mapUrl = mapUrl.replace(':8000', '/server');
+      // The api-server advertises map image URLs as <public_url>/cache/... .
+      // A site that fronts the api-server with a TLS proxy (Waterloo: nginx,
+      // /server/ -> :8000) needs them rewritten to the public HTTPS URL; a
+      // site without one (M Hotel) must use them as-is - the hard-coded
+      // rewrite that used to live here broke the map there. The rewrite is
+      // therefore runtime config (index.html, injected from
+      // MAP_IMAGE_URL_FROM / MAP_IMAGE_URL_TO), off by default.
+      const mapUrl = rewriteMapImageUrl(currentLevel.images[0].data);
       useLoader.preload(TextureLoader, mapUrl);
       setImageUrl(mapUrl);
     })();

@@ -19,6 +19,10 @@
       window.__RMF_DASHBOARD_CONFIG__ = {
         rmfServerUrl: '__RMF_SERVER_URL__',
         trajectoryServerUrl: '__TRAJECTORY_SERVER_URL__',
+        // optional: rewrite map image URLs for sites behind a TLS proxy,
+        // e.g. from 'http://10.0.0.5:8000' to 'https://hotel.example/server'
+        mapImageUrlFrom: '__MAP_IMAGE_URL_FROM__',
+        mapImageUrlTo: '__MAP_IMAGE_URL_TO__',
       };
     </script>
     <script type="module" src="/main.tsx"></script>
