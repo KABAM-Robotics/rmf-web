@@ -2,6 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- __BASE_TAG__ : inject-env.sh puts <base href="$BASE_PATH"> here, so the image's
+         relative asset URLs (vite --base ./) resolve from the mount path on every route. -->
     <link rel="icon" href="%BASE_URL%favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
@@ -23,6 +25,8 @@
         // e.g. from 'http://10.0.0.5:8000' to 'https://hotel.example/server'
         mapImageUrlFrom: '__MAP_IMAGE_URL_FROM__',
         mapImageUrlTo: '__MAP_IMAGE_URL_TO__',
+        // path the dashboard is served under, e.g. '/rmf/' behind a reverse proxy
+        basePath: '__BASE_PATH__',
       };
     </script>
     <script type="module" src="/main.tsx"></script>

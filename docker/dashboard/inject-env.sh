@@ -8,6 +8,12 @@ set -euo pipefail
 : "${TRAJECTORY_SERVER_URL:=ws://localhost:8006}"
 sed -i "s,__RMF_SERVER_URL__,${RMF_SERVER_URL},g" /opt/dashboard/index.html
 sed -i "s,__TRAJECTORY_SERVER_URL__,${TRAJECTORY_SERVER_URL},g" /opt/dashboard/index.html
+# Path the dashboard is served under (reverse proxy), with leading and trailing
+# slash; default / = served at the root, as before.
+: "${BASE_PATH:=/}"
+[[ "$BASE_PATH" == /*/ || "$BASE_PATH" == / ]] || { echo "BASE_PATH must start and end with /: $BASE_PATH" >&2; exit 1; }
+sed -i "s,__BASE_PATH__,${BASE_PATH},g" /opt/dashboard/index.html
+sed -i "s,<!-- __BASE_TAG__ :,<base href=\"${BASE_PATH}\" /><!--,g" /opt/dashboard/index.html
 # Optional map-image URL rewrite for sites that front the api-server with a TLS
 # proxy (Waterloo: MAP_IMAGE_URL_FROM=http://<ip>:8000 MAP_IMAGE_URL_TO=https://<host>/server).
 # Unset = no rewrite; the placeholders are left in place and ignored by the app.

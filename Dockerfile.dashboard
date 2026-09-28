@@ -20,7 +20,9 @@ COPY ./ ./
 # api-server/ros-translator pull in pipenv-install (needs python venv); neither
 # is part of the static dashboard build.
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter rmf-dashboard-framework...
-RUN cd packages/rmf-dashboard-framework && pnpm build:example examples/demo
+# --base ./: asset URLs relative to index.html, so one image serves at / or under
+# a proxy path; BASE_PATH (inject-env.sh) sets the router prefix at start.
+RUN cd packages/rmf-dashboard-framework && pnpm build:example examples/demo --base ./
 
 FROM docker.io/library/node:20-bookworm-slim
 RUN npm install -g serve@14 && npm cache clean --force

@@ -75,6 +75,10 @@ export default function App() {
   const hostIP = import.meta.env.VITE_HOST_IP || 'localhost';
   const apiServerPort = import.meta.env.VITE_API_SERVER_PORT || '8000';
   const apiServerUrl = fromRuntime(runtime.rmfServerUrl) ?? `http://${hostIP}:${apiServerPort}`;
+  // Routes are absolute, so they need the mount path; a relative build base
+  // ('./', the container image) is no route prefix.
+  const buildBase = import.meta.env.BASE_URL.startsWith('/') ? import.meta.env.BASE_URL : '/';
+  const baseUrl = fromRuntime(runtime.basePath) ?? buildBase;
   const trajectoryServerUrl =
     fromRuntime(runtime.trajectoryServerUrl) ??
     import.meta.env.VITE_TRAJECTORY_SERVER_URL ??
@@ -83,10 +87,11 @@ export default function App() {
     <RmfDashboard
       apiServerUrl={apiServerUrl}
       trajectoryServerUrl={trajectoryServerUrl}
+      baseUrl={baseUrl}
       authenticator={new StubAuthenticator()}
       helpLink="https://osrf.github.io/ros2multirobotbook/rmf-core.html"
       reportIssueLink="https://github.com/open-rmf/rmf-web/issues"
-      resources={{ fleets: {}, logos: { header: '/resources/defaultLogo.png' } }}
+      resources={{ fleets: {}, logos: { header: `${baseUrl}resources/defaultLogo.png` } }}
       tasks={{
         allowedTasks: [
           { taskDefinitionId: 'patrol' },
